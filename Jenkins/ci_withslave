@@ -1,0 +1,24 @@
+pipeline {
+    agent none // No default agent is specified for the entire pipeline
+
+    tools { // Define tools required for the pipeline
+        maven "MAVEN" // Use Maven tool installation configured in Jenkins
+        jdk "JDK11" // Use JDK 11 tool installation configured in Jenkins
+    }
+    
+    stages {
+        stage('Build on Slave') {
+            agent {
+                label 'linux-servers' // Specify the agent label for this stage
+            }
+            steps {
+                // Checkout the specified branch from the repository
+                git branch: 'vp-rem', url: 'https://github.com/devopshydclub/vprofile-repo.git'
+                
+                // Your build steps here
+                // For example:
+                sh 'mvn clean install -DskipTests' // Run Maven build with skipping tests
+            }
+        }
+    }
+}

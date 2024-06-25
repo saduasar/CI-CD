@@ -1,0 +1,87 @@
+stages:
+    - build
+    - package
+    - test
+    - deploy
+
+variables:
+    APP_VERSION : $CI_PIPELINE_IID
+#variables:
+   # APP_BASE_URL_stage : http://stage-react-2024.s3-website-us-east-1.amazonaws.com
+  #  APP_BASE_URL_prod :  http://2023samtest.s3-website-us-east-1.amazonaws.com
+  #  stage_bucket_name : stage-react-2024
+  #  prod_bucket_name: 2023samtest
+
+.build:
+    stage: build
+    script: 
+       - echo $CI_DEPLOY_USER
+       - echo $CI_DEPLOY_PASSWORD
+       - echo $GITLAB_DEPLOY_TOKEN | tr -d "\n" | base64
+
+build:
+    stage: build
+    image: node:16-alpine # this image has yarn needed to run test and build of the react webapp.
+    script: 
+        - yarn install # to download and install the modules and dependencies needed for the react webapp
+        - yarn lint
+        - yarn test
+        - yarn build
+        - echo "$APP_VERSION" > build/version.html 
+
+    artifacts:
+        paths:
+            - build
+
+build docker image:
+    stage: package
+    image: docker:20.10.12
+    services:  #run another container in the docker container with image docker:20.10.12-dind
+        - docker:20.10.12-dind
+    script: 
+        - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER $CI_REGISTRY --password-stdin
+        - docker build -t $CI_REGISTRY_IMAGE -t $CI_REGISTRY_IMAGE:$APP_VERSION .
+        - docker images ls
+        - docker push --all-tags $CI_REGISTRY_IMAGE
+
+test docker image:
+    stage: test
+    image: curlimages/curl
+    services: # run another container in the curl container with image $CI_REGISTRY_IMAGE:$APP_VERSION and container name website
+        - name: $CI_REGISTRY_IMAGE:$APP_VERSION 
+          alias: website #container name
+    script: 
+        - curl http://website/version.html | grep $APP_VERSION
+
+deploy to production:
+    image:
+        name: amazon/aws-cli:2.4.11
+        entrypoint: [""]
+    stage: deploy
+    variables:
+        APP_NAME: bean
+        APP_ENV_NAME: Bean-env
+        AWS_REGION: us-east-1
+    environment: production
+    before_script:
+      - mkdir -p $HOME/.docker
+    #  - echo $DOCKER_AUTH_CONFIG > $HOME/.docker/config.json
+    script: 
+        - aws  --version
+        - yum install -y gettext
+        - export DEPLOY_TOKEN=$(echo $GITLAB_DEPLOY_TOKEN | tr -d "\n" | base64)    #c2FtdGVzdDpnbGR0LTlpV1diRFZ2Y2Nwa1FTbWh2RHR2 
+        - envsubst < templates/Dockerrun.aws.json > Dockerrun.aws.json #the command envsubst is used for templating.It will change the variables in the file pass to it as input(envsubst < templates/Dockerrun.aws.json) and then return an output of the new file with the changed variables on the terminal. Finally we pass back the output to create a new file (> Dockerrun.aws.json ). but the envsubst requires the "gettext" package to be installed. 
+        - envsubst < templates/auth.json > auth.json
+        - cat Dockerrun.aws.json
+        - cat auth.json
+        - cp auth.json $HOME/.docker/config.json
+        - AWS_ACCESS_KEY_ID="$AWS_ACCESS_K" AWS_SECRET_ACCESS_KEY="$AWS_SECRETK" aws s3 cp Dockerrun.aws.json s3://$AWS_S3_BUCKET/Dockerrun.aws.json
+        - AWS_ACCESS_KEY_ID="$AWS_ACCESS_K" AWS_SECRET_ACCESS_KEY="$AWS_SECRETK" aws s3 cp auth.json s3://$AWS_S3_BUCKET/auth.json
+        - AWS_ACCESS_KEY_ID="$AWS_ACCESS_K" AWS_SECRET_ACCESS_KEY="$AWS_SECRETK" aws elasticbeanstalk create-application-version --application-name "$APP_NAME" --version-label $APP_VERSION --source-bundle S3Bucket=$AWS_S3_BUCKET,S3Key=Dockerrun.aws.json --region $AWS_REGION 
+        - AWS_ACCESS_KEY_ID="$AWS_ACCESS_K" AWS_SECRET_ACCESS_KEY="$AWS_SECRETK" aws elasticbeanstalk update-environment --application-name "$APP_NAME" --version-label $APP_VERSION --environment-name $APP_ENV_NAME --region $AWS_REGION
+        - cat /root/.docker/config.json
+        - echo $CI_DEPLOY_USER
+        - echo $CI_DEPLOY_PASSWORD
+
+
+

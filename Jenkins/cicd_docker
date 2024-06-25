@@ -1,0 +1,110 @@
+// Define color mapping for Slack notifications
+def COLOR_MAP = [
+    'SUCCESS': 'good', 
+    'FAILURE': 'danger',
+]
+
+// Define the pipeline
+pipeline {
+    agent any // Run the pipeline on any available agent
+
+    tools { // Define tools required for the pipeline
+        jdk "JDK11" // Use JDK 11
+    }
+
+    environment { // Define environment variables
+        registryCredential = 'ecr:us-east-1:awscreds' // Docker registry credentials
+        appRegistry = "091570247959.dkr.ecr.us-east-1.amazonaws.com/vrpofileimg" // Docker registry for the application
+        vprofileRegistry = "https://091570247959.dkr.ecr.us-east-1.amazonaws.com" // URL of the Docker registry
+        cluster = "vprofile"
+        service = "vprofileappsvc"
+    }
+
+    stages { // Define stages of the pipeline
+        stage('Fetch code') { // Fetch code from the Git repository
+            steps {
+                git branch: 'docker', url:'https://github.com/devopshydclub/vprofile-project.git'
+            }  
+        }
+
+        stage('Test'){ // Run Maven tests
+            steps {
+                sh 'mvn test'
+            }
+        }
+
+        stage ('CODE ANALYSIS WITH CHECKSTYLE'){ // Perform code analysis using Checkstyle
+            steps {
+                sh 'mvn checkstyle:checkstyle'
+            }
+            post { // Execute post-build actions
+                success { // Execute if the stage is successful
+                    echo 'Generated Analysis Result'
+                }
+            }
+        }
+
+        stage('Sonar Analysis') { // Perform SonarQube analysis
+            environment { // Define environment variables specific to this stage
+                scannerHome = tool 'sonar4.7' // Define the SonarQube scanner tool
+            }
+            steps {
+               withSonarQubeEnv('sonar') { // Use SonarQube environment
+                   sh '''${scannerHome}/bin/sonar-scanner -Dsonar.projectKey=vprofile \
+                   -Dsonar.projectName=vprofile \
+                   -Dsonar.projectVersion=1.0 \
+                   -Dsonar.sources=src/ \
+                   -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/ \
+                   -Dsonar.junit.reportsPath=target/surefire-reports/ \
+                   -Dsonar.jacoco.reportsPath=target/jacoco.exec \
+                   -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml''' // Run SonarQube scanner with specified parameters
+              }
+            }
+        }
+
+        stage("Quality Gate") { // Wait for SonarQube Quality Gate
+            steps {
+                timeout(time: 1, unit: 'HOURS') { // Set a timeout for waiting
+                    waitForQualityGate abortPipeline: true // Fail the pipeline if Quality Gate fails
+                }
+            }
+        }
+
+        stage('Build App Image') { // Build Docker image for the application
+            steps {
+                script {
+                    dockerImage = docker.build( appRegistry + ":$BUILD_NUMBER", "./Docker-files/app/multistage/") // Build Docker image
+                }
+            }
+        }
+
+        stage('Upload App Image') { // Upload Docker image to Docker registry
+            steps{
+                script {
+                    docker.withRegistry( vprofileRegistry, registryCredential ) { // Use Docker registry credentials
+                        dockerImage.push("$BUILD_NUMBER") // Push image with build number tag
+                        dockerImage.push('latest') // Push image with 'latest' tag
+                    } 
+                }
+            }
+        }
+
+        stage('Deploy to ecs') { // Deploy the application to ECS
+            steps {
+                withAWS(credentials: 'awscreds', region: 'us-east-1') {
+                    sh 'aws ecs update-service --cluster ${cluster} --service ${service} --force-new-deployment'
+                }
+            }
+        }
+
+    }
+
+    post { // Define post-build actions
+        always { // Execute always, regardless of build result
+            echo 'Slack Notifications.' // Print notification message
+            slackSend channel: '#jenkinscicd', // Send notification to Slack channel
+                color: COLOR_MAP[currentBuild.currentResult], // Set color of notification based on build result
+                message: "*${currentBuild.currentResult}:* Job ${env.JOB_NAME} build ${env.BUILD_NUMBER} \n More info at: ${env.BUILD_URL}" // Build notification message
+        }
+    }
+}
