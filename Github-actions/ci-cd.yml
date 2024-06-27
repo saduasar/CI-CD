@@ -49,6 +49,7 @@ jobs:
           docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
 
   DeployToEKS:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: Image_Build_and_Push
     runs-on: ubuntu-latest
     steps:
