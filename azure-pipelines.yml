@@ -1,0 +1,61 @@
+trigger:
+- main
+
+stages:
+  - stage: Build_Artifact
+    displayName: 'Build and Publish Artifact'
+    pool: 
+      name: 'linux-server'
+    jobs:
+      - job: buildInstallAndStoreArtifacts
+        displayName: 'Build and Install Artifacts'
+        steps:
+          - task: NodeTaskRunnerInstaller@0
+            inputs:
+              nodeVersion: '16'
+            displayName: 'Install Node.js 16'
+
+          - script: |
+              echo "Running npm install and build..."
+              npm install
+              npm run build
+              echo "Listing build directory contents..."
+              ls -ll build
+            displayName: 'npm install and build'
+            continueOnError: false # Ensure the build stops if npm install or build fails
+
+          - publish: $(System.DefaultWorkingDirectory)/build
+            artifact: WebApp
+            displayName: 'Publish WebApp Artifact'
+
+  - stage: Deploy_Artifact
+    displayName: 'Download and Deploy Artifact'
+    pool: 
+      name: 'linux-server'
+    dependsOn: Build_Artifact # Ensure this stage runs only after Build_Artifact is successful
+    jobs:
+      - job: downloadArtifacts
+        displayName: 'Download Artifacts'
+        steps:
+          - download: current
+            artifact: WebApp
+            displayName: 'Download WebApp Artifact'
+
+          - script: |
+              echo "Listing contents of the downloaded artifact..."
+              ls -la $(Pipeline.Workspace)/WebApp
+            displayName: 'Verify Downloaded Artifacts'
+
+      - job: deployArtifacts
+        displayName: 'Deploy Artifact'
+        dependsOn: downloadArtifacts
+        steps: 
+          - task: AzureRmWebAppDeployment@4
+            inputs:
+              ConnectionType: 'AzureRM'
+              azureSubscription: 'Azure subscription 1(f51fe18c-ec9b-44da-ac61-3aa53f5854cb)' # Replace with your actual subscription
+              appType: 'webAppLinux'
+              WebAppName: 'youtube-app' # Replace with your actual web app name
+              packageForLinux: '$(Pipeline.Workspace)/WebApp'
+              RuntimeStack: 'STATICSITE|1.0'
+            displayName: 'Deploy to Azure Web App'
