@@ -18,7 +18,7 @@ pipelineJob('Projects/vProfile/vProfile-CI-Pipeline') {
                     remote {
                         url('https://github.com/saduasar/vprofile-project.git')
                         // ADDED: references the Jenkins Credential ID "git"
-                        credentials('git') 
+                        credentials('github-ssh') 
                     }
                     // MOVED: 'branch' is usually defined outside the 'remote' block in standard DSL
                     branches('master')
