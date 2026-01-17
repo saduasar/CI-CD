@@ -11,23 +11,23 @@ folder('Projects/vProfile') {
 pipelineJob('Projects/vProfile/vProfile-CI-Pipeline') {
     description('Continuous Integration pipeline for vProfile App')
     
-    // Define where the source code is
     definition {
         cpsScm {
             scm {
                 git {
                     remote {
                         url('https://github.com/saduasar/vprofile-project.git')
-                        branch('master')
+                        // ADDED: references the Jenkins Credential ID "git"
+                        credentials('git') 
                     }
+                    // MOVED: 'branch' is usually defined outside the 'remote' block in standard DSL
+                    branches('master')
                 }
             }
-            // Point to the Jenkinsfile inside the app repo (see Layer 3)
             scriptPath('Jenkinsfile') 
         }
     }
     
-    // Configure Triggers (e.g., Run every night)
     triggers {
         cron('H H * * *')
     }
